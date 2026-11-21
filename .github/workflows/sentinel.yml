@@ -3,7 +3,7 @@ name: Gate 行情哨兵
 on:
   pull_request:
   schedule:
-    - cron: '3,18,33,48 * * * *'
+    - cron: '13,28,43,58 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:

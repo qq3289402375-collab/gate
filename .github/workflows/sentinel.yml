@@ -1,28 +1,77 @@
-name: Gate 50-Symbol Sentinel
+name: Gate 行情哨兵
 
 on:
+  pull_request:
   schedule:
-    # 每 15 分钟自动巡检一次（私有仓库请改成 */30）
-    - cron: '*/15 * * * *'
+    - cron: '3,18,33,48 * * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '仅扫描公开行情，不发通知、不扣 API 余额'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
 
 jobs:
-  scan:
+  test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -v
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+  scan:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    concurrency:
+      group: gate-sentinel-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      SEND_ALERTS: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'schedule' || !inputs.dry_run) }}
+      SENTINEL_SCORE: ${{ vars.SENTINEL_SCORE }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install requests
+      - name: 恢复运行状态
+        if: env.SEND_ALERTS == 'true'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .sentinel/state.sqlite3
+          key: sentinel-v3-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: sentinel-v3-state-
 
-      - name: Run Sentinel
+      - name: 只读试跑
+        if: env.SEND_ALERTS != 'true'
+        run: python sentinel.py --dry-run
+
+      - name: 定时扫描与通知
+        if: env.SEND_ALERTS == 'true'
         env:
           QQ_EMAIL: ${{ secrets.QQ_EMAIL }}
           QQ_AUTH_CODE: ${{ secrets.QQ_AUTH_CODE }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          SENTINEL_DEEPSEEK: ${{ vars.SENTINEL_DEEPSEEK }}
+          SENTINEL_AI_DAILY_CAP: ${{ vars.SENTINEL_AI_DAILY_CAP }}
         run: python sentinel.py
+
+      - name: 保存运行状态
+        if: always() && env.SEND_ALERTS == 'true' && hashFiles('.sentinel/state.sqlite3') != ''
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .sentinel/state.sqlite3
+          key: sentinel-v3-state-${{ github.run_id }}-${{ github.run_attempt }}

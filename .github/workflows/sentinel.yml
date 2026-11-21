@@ -1,0 +1,28 @@
+name: Gate 50-Symbol Sentinel
+
+on:
+  schedule:
+    # 每 15 分钟自动巡检一次（私有仓库请改成 */30）
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Sentinel
+        env:
+          QQ_EMAIL: ${{ secrets.QQ_EMAIL }}
+          QQ_AUTH_CODE: ${{ secrets.QQ_AUTH_CODE }}
+        run: python sentinel.py
